@@ -1,0 +1,154 @@
+// ******************************************************************************************************
+// ******************************************************************************************************
+//
+//										8008 CPU Definition
+//
+//						Information from 8008/8008-1 Datasheet pages 7 and 8
+//
+// ******************************************************************************************************
+// ******************************************************************************************************
+//
+//	@C 		bits 3..5 	NC,NZ,P,PO,C,Z,M,PE
+//	@P 		bits 1..5 	2 hex digits, port ID
+//	@R 		bits 0..2 	ABCDEHLM
+//	@S 		bits 3..5 	ABCDEHLM
+//	@X 		bits 3..5 	2 hex digits for RST
+//
+// ******************************************************************************************************
+//
+//	CPU Status variables 		8 bit : 	A,B,C,D,E,H,L,MB,PCIX,Halt
+//								16 bit : 	MA,temp16,Cycles,PC[8]
+//
+// ******************************************************************************************************
+//												Macros etc.
+// ******************************************************************************************************
+
+:#define MAHL() 	{ MA = (((WORD16)H) << 8)|L }										// Set MA to HL
+:#define FETCH() 	{ MA = PC[PCIX]++;READ(); } 										// Fetch byte to MB
+
+:static void __Reset8008(void) {														// Reset the CPU
+:	for (A = 0;A < 8;A++) PC[A] = 0;
+:	A = B = C = D = E = H = L = PCIX = Cycles = Halt = 0;	
+:}
+
+// ******************************************************************************************************
+//										Index Register Instructions
+// ******************************************************************************************************
+
+C0-C6	5	"MOV A,@R"		A = @R 														// Register to Register
+C8-CE	5	"MOV B,@R"		B = @R
+D0-D6	5	"MOV C,@R"		C = @R
+D8-CE	5	"MOV D,@R"		D = @R
+E0-E6	5	"MOV E,@R"		E = @R
+E8-EE	5	"MOV H,@R"		H = @R
+F0-F6	5	"MOV L,@R"		L = @R
+
+C7-F7,8 8 	"MOV @S,M"		MAHL();READ();@S = MB 										// Memory to Register
+
+F8-FE 	7 	"MOV M,@R"		MAHL();MB = @R;WRITE()										// Register to Memory
+
+06-36,8 8 	"MVI @S,$1"		FETCH();@S = MB 											// Register Immediate
+
+3E 		9 	"MVI M,$1"		FETCH();MAHL();WRITE();										// Memory Immediate
+
+08-30,8 5 	"INR @S"		pszValue = ++@S 											// Inc/Dec Registers
+09-31,8 5 	"DCR @S"		pszValue = --@S 
+
+// ******************************************************************************************************
+//										Accumulator Group Instructions
+// ******************************************************************************************************
+
+:#define ADD(a,b) 	temp16 = A + (a) + (b);A = temp16;Carry = (temp16 >> 8) & 1
+:#define SUB(a,b) 	temp16 = A - (a) - (b);A = temp16;Carry = (temp16 >> 8) & 1
+
+80-86 	5 	"ADD @R"		ADD(@R,0);A = pszValue										// Add
+87 		8 	"ADD M"			MAHL();READ();ADD(MB,0);A = pszValue
+04 		8 	"ADI $1"		FETCH();ADD(MB,0);A = pszValue
+
+88-8E 	5 	"ADC @R"		ADD(@R,Carry);A = pszValue 									// Add with carry
+8F 		8 	"ADC M"			MAHL();READ();ADD(MB,Carry);A = pszValue
+0C 		8 	"ACI $1"		FETCH();ADD(MB,Carry);A = pszValue
+
+90-96 	5 	"SUB @R"		SUB(@R,0);A = pszValue										// Subtract
+97 		8 	"SUB M"			MAHL();READ();SUB(MB,0);A = pszValue
+14 		8 	"SUI $1"		FETCH();SUB(MB,0);A = pszValue
+
+98-9E 	5 	"SBB @R"		SUB(@R,Carry);A = pszValue 									// Subtract with borrow
+9F 		8 	"SBB M"			MAHL();READ();SUB(MB,Carry);A = pszValue
+1C 		8 	"SBI $1"		FETCH();SUB(MB,Carry);A = pszValue
+
+A0-A6 	5 	"ANA @R"		Carry = 0;A = pszValue = A & @R 							// And
+A7 		8 	"ANA M"			MAHL();READ();Carry = 0;A = pszValue = A & MB
+24 		8 	"ANI $1"		FETCH();Carry = 0;A = pszValue = A & MB
+
+A8-AE 	5 	"XRA @R"		Carry = 0;A = pszValue = A ^ @R 							// Xor
+AF 		8 	"XRA M"			MAHL();READ();Carry = 0;A = pszValue = A ^ MB
+2C 		8 	"XRI $1"		FETCH();Carry = 0;A = pszValue = A ^ MB
+
+B0-B6 	5 	"ORA @R"		Carry = 0;A = pszValue = A | @R 							// Or
+B7 		8 	"ORA M"			MAHL();READ();Carry = 0;A = pszValue = A | MB
+34 		8 	"ORI $1"		FETCH();Carry = 0;A = pszValue = A | MB
+
+B8-BE 	5 	"CMP @R"		SUB(@R,0) 													// Compare
+BF 		8 	"CMP M"			MAHL();READ();SUB(MB,0)
+3C 		8 	"CPI $1"		FETCH();SUB(MB,0)
+
+02 		5 	"RLC"			Carry = A >> 7;A = (A << 1) | Carry 						// Rotate left into Carry
+0A 		5 	"RRC"			Carry = A & 1;A = (A >> 1) | (Carry << 7)					// Rotate right into Carry
+
+12 		5 	"RAL" 			temp16 = (A << 1) | Carry;A = temp16;Carry = temp16 >> 8 	// Rotate left through Carry
+1A 		5 	"RAR"			temp16 = A|(Carry << 8);A = temp16 >> 1;Carry = temp16 & 1 	// Rotate right through Carry
+
+// ******************************************************************************************************
+//							Program Counter and Stack Control Instructions
+// ******************************************************************************************************
+
+:#define FETCH16() 			{ FETCH();temp16 = MB;FETCH();temp16 = (temp16 << 8)|MB; }	// Fetch 2 byte address
+
+:#define JUMP() 			{ PCTR[PCIX] = temp16 & 0x3FFF; } 							// Execution Code
+:#define CALL() 			{ PCIX = (PCIX+1) & 7;JUMP(); }
+:#define RETURN() 			{ PCIX = (PXIX-1) & 7; }
+
+:#define TESTNC()			(Carry == 0) 												// Conditional Tests
+:#define TESTNZ()			(pszValue != 0)
+:#define TESTP()			((pszValue & 0x80) == 0)
+:#define TESTPO()			(__IsParityEven() == 0)
+:#define TESTC()			(Carry != 0)
+:#define TESTZ()			(pszValue == 0)
+:#define TESTM()			((pszValue & 0x80) != 0)
+:#define TESTPE()			(__IsParityEven() != 0)
+
+44-7C,8 11 	"JMP $2"		FETCH16();JUMP();											// Jump
+40-78,8 10 	"J@C $2"		FETCH16();if (TEST@C()) JUMP(); 							// Conditional Jump
+
+46-7E,8 11 	"CALL $2"		FETCH16();CALL();											// Call
+42-7A,8 10 	"C@C $2"		FETCH16();if (TEST@C()) CALL();								// Conditional Call
+
+07-3F,8 5 	"RET"			RETURN() 													// Return
+03-3B,8 4 	"R@C"			if (TEST@C()) RETURN() 										// Conditional Return
+
+05-3D,8 5 	"RST @X"		PCIX = (PCIX+1) & 7;PC[PCIX] = 0x@X 						// Restart
+
+:static BYTE8 __IsParityEven(void) {													// Check test value parity.
+:	BYTE8 n = A;
+:	BYTE8 bitCount = 0;
+:	while (n != 0) {
+:		if ((n & 1) != 0) bitCount++;
+:		n = n >> 1;
+:	}	
+:	return (bitCount & 1) == 0;
+:}
+
+// ******************************************************************************************************
+//										Input/Output Instructions
+// ******************************************************************************************************
+
+41-4F,2 8 	"IN @P"			A = INPORT@P() 												// Read port
+51-7F,2 6 	"OUT @P"		OUTPORT@P(A)												// Write port
+
+// ******************************************************************************************************
+//											Machine Instruction
+// ******************************************************************************************************
+
+00-01 	4 	"HLT"			Halt = 1
+FF 		4 	"HLT"			Halt = 1
